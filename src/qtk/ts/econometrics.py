@@ -68,6 +68,16 @@ __all__ = [
     "corr_swap_correlation",
     "beta",
     "max_drawdown",
+    "alpha",
+    "bull_beta",
+    "bear_beta",
+    "timing_ratio",
+    "tracking_error",
+    "active_premium",
+    "up_capture",
+    "down_capture",
+    "systematic_risk",
+    "specific_risk",
 ]
 
 
@@ -95,7 +105,9 @@ class RiskFreeRateCurrency(Enum):
 # ---------------------------------------------------------------------------
 
 
-def excess_returns_pure(price_series: pl.DataFrame, spot_curve: pl.DataFrame) -> pl.DataFrame:
+def excess_returns_pure(
+    price_series: pl.DataFrame, spot_curve: pl.DataFrame
+) -> pl.DataFrame:
     """
     Compute excess returns of a price series relative to a spot rate curve.
 
@@ -113,7 +125,9 @@ def excess_returns_pure(price_series: pl.DataFrame, spot_curve: pl.DataFrame) ->
         mult = 1 + curve_vals[i] / curve_vals[i - 1] - bench_vals[i] / bench_vals[i - 1]
         er.append(er[-1] * mult)
 
-    return pl.DataFrame({"date": dates, "value": er}).cast({"date": pl.Date, "value": pl.Float64})
+    return pl.DataFrame({"date": dates, "value": er}).cast(
+        {"date": pl.Date, "value": pl.Float64}
+    )
 
 
 def excess_returns(
@@ -148,7 +162,9 @@ def excess_returns(
         fraction = day_count_fraction(dates[j - 1], dates[j], day_count_convention)
         er.append(er[-1] + vals[j] - vals[j - 1] * (1 + benchmark_or_rate * fraction))
 
-    return pl.DataFrame({"date": dates, "value": er}).cast({"date": pl.Date, "value": pl.Float64})
+    return pl.DataFrame({"date": dates, "value": er}).cast(
+        {"date": pl.Date, "value": pl.Float64}
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -266,14 +282,18 @@ def returns(
         )
     elif type == Returns.LOGARITHMIC:
         result = joined.with_columns(
-            (pl.col("value").log(base=math.e) - pl.col("value_lag").log(base=math.e)).alias("value")
+            (
+                pl.col("value").log(base=math.e) - pl.col("value_lag").log(base=math.e)
+            ).alias("value")
         )
     elif type == Returns.ABSOLUTE:
         result = joined.with_columns(
             (pl.col("value") - pl.col("value_lag")).alias("value")
         )
     else:
-        raise QtkValueError("Unknown returns type (use simple / logarithmic / absolute)")
+        raise QtkValueError(
+            "Unknown returns type (use simple / logarithmic / absolute)"
+        )
 
     return result.select(["date", "value"])
 
@@ -303,11 +323,11 @@ def prices(
             (pl.col("value").exp().cum_prod() * initial).alias("value")
         )
     elif type == Returns.ABSOLUTE:
-        return series.with_columns(
-            (pl.col("value").cum_sum() + initial).alias("value")
-        )
+        return series.with_columns((pl.col("value").cum_sum() + initial).alias("value"))
     else:
-        raise QtkValueError("Unknown returns type (use simple / logarithmic / absolute)")
+        raise QtkValueError(
+            "Unknown returns type (use simple / logarithmic / absolute)"
+        )
 
 
 def index(x: pl.DataFrame, initial: float = 1.0) -> pl.DataFrame:
@@ -320,7 +340,9 @@ def index(x: pl.DataFrame, initial: float = 1.0) -> pl.DataFrame:
     """
     non_null = x.drop_nulls("value")
     if non_null.is_empty():
-        return pl.DataFrame({"date": [], "value": []}).cast({"date": pl.Date, "value": pl.Float64})
+        return pl.DataFrame({"date": [], "value": []}).cast(
+            {"date": pl.Date, "value": pl.Float64}
+        )
     first_val = non_null["value"][0]
     if first_val == 0:
         raise QtkValueError(
@@ -363,7 +385,9 @@ def _get_annualization_factor(x: pl.DataFrame) -> int:
     elif 360 <= avg < 386:
         return int(AnnualizationFactor.ANNUALLY)
     else:
-        raise QtkValueError(f"Cannot infer annualization factor, average distance: {avg:.2f} days.")
+        raise QtkValueError(
+            f"Cannot infer annualization factor, average distance: {avg:.2f} days."
+        )
 
 
 def annualize(x: pl.DataFrame) -> pl.DataFrame:
@@ -402,7 +426,9 @@ def volatility(
     ret = returns(x, type=returns_type) if returns_type is not None else x
     window = Window(w.w, 0)
 
-    vol = mean(ret, window, MeanType.QUADRATIC) if assume_zero_mean else std(ret, window)
+    vol = (
+        mean(ret, window, MeanType.QUADRATIC) if assume_zero_mean else std(ret, window)
+    )
 
     if annualization_factor is not None:
         ann_vol = vol.with_columns(
@@ -434,11 +460,19 @@ def vol_swap_volatility(
         n_days = prices_series.height
     if isinstance(n_days, Window):
         if n_days.r != n_days.w - 1:
-            raise QtkTypeError("Ramp-up must be window size minus 1, e.g. Window(4, 3).")
+            raise QtkTypeError(
+                "Ramp-up must be window size minus 1, e.g. Window(4, 3)."
+            )
         window = n_days
     else:
         window = Window(n_days, n_days - 1)
-    return volatility(prices_series, window, Returns.LOGARITHMIC, annualization_factor, assume_zero_mean)
+    return volatility(
+        prices_series,
+        window,
+        Returns.LOGARITHMIC,
+        annualization_factor,
+        assume_zero_mean,
+    )
 
 
 def correlation(
@@ -477,7 +511,9 @@ def correlation(
     else:
         ret1, ret2 = x, y
 
-    joined = ret1.join(ret2, on="date", how="inner", suffix="_y").sort("date").drop_nulls()
+    joined = (
+        ret1.join(ret2, on="date", how="inner", suffix="_y").sort("date").drop_nulls()
+    )
     x_arr = joined["value"].to_numpy(allow_copy=True)
     y_arr = joined["value_y"].to_numpy(allow_copy=True)
     dates = joined["date"].to_list()
@@ -558,11 +594,15 @@ def corr_swap_correlation(
         n_days = min(x.height, y.height)
     if isinstance(n_days, Window):
         if n_days.r != n_days.w - 1:
-            raise QtkTypeError("Ramp-up must be window size minus 1, e.g. Window(4, 3).")
+            raise QtkTypeError(
+                "Ramp-up must be window size minus 1, e.g. Window(4, 3)."
+            )
         window = n_days
     else:
         window = Window(n_days - 1, n_days - 2)
-    return correlation(x, y, window, SeriesType.PRICES, Returns.LOGARITHMIC, assume_zero_mean)
+    return correlation(
+        x, y, window, SeriesType.PRICES, Returns.LOGARITHMIC, assume_zero_mean
+    )
 
 
 def beta(
@@ -600,10 +640,12 @@ def beta(
 
     # Set first 3 values to null as in original (initial values may be extreme)
     if result.height >= 3:
-        result = pl.concat([
-            result[:3].with_columns(pl.lit(None).cast(pl.Float64).alias("value")),
-            result[3:],
-        ])
+        result = pl.concat(
+            [
+                result[:3].with_columns(pl.lit(None).cast(pl.Float64).alias("value")),
+                result[3:],
+            ]
+        )
 
     return apply_ramp(interpolate(result, x, Interpolate.NAN), w)
 
@@ -623,13 +665,15 @@ def max_drawdown(
     if isinstance(w.w, int):
         result = (
             x.with_columns(
-                pl.col("value").rolling_max(window_size=w.w, min_samples=1).alias("rolling_max")
+                pl.col("value")
+                .rolling_max(window_size=w.w, min_samples=1)
+                .alias("rolling_max")
             )
+            .with_columns((pl.col("value") / pl.col("rolling_max") - 1).alias("ratio"))
             .with_columns(
-                (pl.col("value") / pl.col("rolling_max") - 1).alias("ratio")
-            )
-            .with_columns(
-                pl.col("ratio").rolling_min(window_size=w.w, min_samples=1).alias("value")
+                pl.col("ratio")
+                .rolling_min(window_size=w.w, min_samples=1)
+                .alias("value")
             )
             .select(["date", "value"])
         )
@@ -648,9 +692,13 @@ def max_drawdown(
         result_arr = np.full(n, np.nan)
         for i, d in enumerate(dates):
             cutoff = d - td
-            window_ratios = np.array([
-                ratios[j] for j in range(i + 1) if dates[j] > cutoff and not np.isnan(ratios[j])
-            ])
+            window_ratios = np.array(
+                [
+                    ratios[j]
+                    for j in range(i + 1)
+                    if dates[j] > cutoff and not np.isnan(ratios[j])
+                ]
+            )
             if len(window_ratios) > 0:
                 result_arr[i] = np.nanmin(window_ratios)
         result = pl.DataFrame({"date": dates, "value": result_arr}).cast(
@@ -658,3 +706,470 @@ def max_drawdown(
         )
 
     return apply_ramp(result, w)
+
+
+# ---------------------------------------------------------------------------
+# CAPM Extensions
+# ---------------------------------------------------------------------------
+
+
+def alpha(
+    x: pl.DataFrame,
+    benchmark: pl.DataFrame,
+    rf: float = 0.0,
+    w: Union[Window, int, str] = Window(None, 0),
+) -> pl.DataFrame:
+    """
+    Rolling Jensen's alpha: intercept of regression of excess returns on benchmark excess returns.
+
+    :param x: price timeseries of the portfolio
+    :param benchmark: price timeseries of the benchmark
+    :param rf: annualized risk-free rate
+    :param w: rolling window
+    :return: rolling alpha (annualized)
+    """
+    ret_x = returns(x)
+    ret_b = returns(benchmark)
+    joined = ret_x.join(ret_b, on="date", how="inner", suffix="_b").sort("date")
+    ann_factor = _get_annualization_factor(x)
+    w = normalize_window(joined, w)
+
+    x_vals = joined["value"].to_numpy()
+    b_vals = joined["value_b"].to_numpy()
+    dates = joined["date"].to_list()
+    n = len(dates)
+    result = np.full(n, np.nan)
+
+    rf_per_period = rf / ann_factor
+
+    if isinstance(w.w, int):
+        wsize = w.w
+        for i in range(n):
+            start = max(0, i - wsize + 1)
+            xi = x_vals[start : i + 1] - rf_per_period
+            bi = b_vals[start : i + 1] - rf_per_period
+            mask = ~(np.isnan(xi) | np.isnan(bi))
+            xi, bi = xi[mask], bi[mask]
+            if len(xi) >= 3 and np.var(bi, ddof=1) > 0:
+                b_coef = np.cov(xi, bi, ddof=1)[0, 1] / np.var(bi, ddof=1)
+                result[i] = (np.mean(xi) - b_coef * np.mean(bi)) * ann_factor
+    else:
+        td = _to_timedelta(w.w)
+        for i, d in enumerate(dates):
+            cutoff = d - td
+            idx = [j for j in range(i + 1) if dates[j] > cutoff]
+            xi = x_vals[idx] - rf_per_period
+            bi = b_vals[idx] - rf_per_period
+            mask = ~(np.isnan(xi) | np.isnan(bi))
+            xi, bi = xi[mask], bi[mask]
+            if len(xi) >= 3 and np.var(bi, ddof=1) > 0:
+                b_coef = np.cov(xi, bi, ddof=1)[0, 1] / np.var(bi, ddof=1)
+                result[i] = (np.mean(xi) - b_coef * np.mean(bi)) * ann_factor
+
+    df = pl.DataFrame({"date": dates, "value": result}).cast(
+        {"date": pl.Date, "value": pl.Float64}
+    )
+    return apply_ramp(df, w)
+
+
+def bull_beta(
+    x: pl.DataFrame,
+    benchmark: pl.DataFrame,
+    w: Union[Window, int, str] = Window(None, 0),
+) -> pl.DataFrame:
+    """
+    Rolling beta in up-market periods (benchmark return > 0).
+
+    :param x: price timeseries
+    :param benchmark: benchmark price timeseries
+    :param w: rolling window
+    :return: rolling bull beta series
+    """
+    ret_x = returns(x)
+    ret_b = returns(benchmark)
+    joined = ret_x.join(ret_b, on="date", how="inner", suffix="_b").sort("date")
+    w = normalize_window(joined, w)
+
+    x_vals = joined["value"].to_numpy()
+    b_vals = joined["value_b"].to_numpy()
+    dates = joined["date"].to_list()
+    n = len(dates)
+    result = np.full(n, np.nan)
+
+    if isinstance(w.w, int):
+        wsize = w.w
+        for i in range(n):
+            start = max(0, i - wsize + 1)
+            xi = x_vals[start : i + 1]
+            bi = b_vals[start : i + 1]
+            mask = (~(np.isnan(xi) | np.isnan(bi))) & (bi > 0)
+            xi, bi = xi[mask], bi[mask]
+            if len(xi) >= 2 and np.var(bi, ddof=1) > 0:
+                result[i] = np.cov(xi, bi, ddof=1)[0, 1] / np.var(bi, ddof=1)
+    else:
+        td = _to_timedelta(w.w)
+        for i, d in enumerate(dates):
+            cutoff = d - td
+            idx = [j for j in range(i + 1) if dates[j] > cutoff]
+            xi = x_vals[idx]
+            bi = b_vals[idx]
+            mask = (~(np.isnan(xi) | np.isnan(bi))) & (bi > 0)
+            xi, bi = xi[mask], bi[mask]
+            if len(xi) >= 2 and np.var(bi, ddof=1) > 0:
+                result[i] = np.cov(xi, bi, ddof=1)[0, 1] / np.var(bi, ddof=1)
+
+    df = pl.DataFrame({"date": dates, "value": result}).cast(
+        {"date": pl.Date, "value": pl.Float64}
+    )
+    return apply_ramp(df, w)
+
+
+def bear_beta(
+    x: pl.DataFrame,
+    benchmark: pl.DataFrame,
+    w: Union[Window, int, str] = Window(None, 0),
+) -> pl.DataFrame:
+    """
+    Rolling beta in down-market periods (benchmark return < 0).
+
+    :param x: price timeseries
+    :param benchmark: benchmark price timeseries
+    :param w: rolling window
+    :return: rolling bear beta series
+    """
+    ret_x = returns(x)
+    ret_b = returns(benchmark)
+    joined = ret_x.join(ret_b, on="date", how="inner", suffix="_b").sort("date")
+    w = normalize_window(joined, w)
+
+    x_vals = joined["value"].to_numpy()
+    b_vals = joined["value_b"].to_numpy()
+    dates = joined["date"].to_list()
+    n = len(dates)
+    result = np.full(n, np.nan)
+
+    if isinstance(w.w, int):
+        wsize = w.w
+        for i in range(n):
+            start = max(0, i - wsize + 1)
+            xi = x_vals[start : i + 1]
+            bi = b_vals[start : i + 1]
+            mask = (~(np.isnan(xi) | np.isnan(bi))) & (bi < 0)
+            xi, bi = xi[mask], bi[mask]
+            if len(xi) >= 2 and np.var(bi, ddof=1) > 0:
+                result[i] = np.cov(xi, bi, ddof=1)[0, 1] / np.var(bi, ddof=1)
+    else:
+        td = _to_timedelta(w.w)
+        for i, d in enumerate(dates):
+            cutoff = d - td
+            idx = [j for j in range(i + 1) if dates[j] > cutoff]
+            xi = x_vals[idx]
+            bi = b_vals[idx]
+            mask = (~(np.isnan(xi) | np.isnan(bi))) & (bi < 0)
+            xi, bi = xi[mask], bi[mask]
+            if len(xi) >= 2 and np.var(bi, ddof=1) > 0:
+                result[i] = np.cov(xi, bi, ddof=1)[0, 1] / np.var(bi, ddof=1)
+
+    df = pl.DataFrame({"date": dates, "value": result}).cast(
+        {"date": pl.Date, "value": pl.Float64}
+    )
+    return apply_ramp(df, w)
+
+
+def timing_ratio(
+    x: pl.DataFrame,
+    benchmark: pl.DataFrame,
+    w: Union[Window, int, str] = Window(None, 0),
+) -> pl.DataFrame:
+    """
+    Rolling timing ratio: bull beta / bear beta. Values > 1 indicate good market timing.
+
+    :param x: price timeseries
+    :param benchmark: benchmark price timeseries
+    :param w: rolling window
+    :return: rolling timing ratio series
+    """
+    bb = bull_beta(x, benchmark, w)
+    be = bear_beta(x, benchmark, w)
+    joined = bb.join(be, on="date", how="inner", suffix="_bear")
+    return joined.with_columns(
+        (pl.col("value") / pl.col("value_bear")).alias("value")
+    ).select(["date", "value"])
+
+
+def tracking_error(
+    x: pl.DataFrame,
+    benchmark: pl.DataFrame,
+    w: Union[Window, int, str] = Window(None, 0),
+) -> pl.DataFrame:
+    """
+    Rolling tracking error: annualized std dev of active returns (portfolio - benchmark).
+
+    :param x: price timeseries of the portfolio
+    :param benchmark: price timeseries of the benchmark
+    :param w: rolling window
+    :return: tracking error series (in percent, same scale as volatility())
+    """
+    import math as _math
+
+    ret_x = returns(x)
+    ret_b = returns(benchmark)
+    joined = ret_x.join(ret_b, on="date", how="inner", suffix="_b").sort("date")
+    ann_factor = _get_annualization_factor(x)
+    w = normalize_window(joined, w)
+
+    active = (joined["value"] - joined["value_b"]).to_numpy()
+    dates = joined["date"].to_list()
+    n = len(dates)
+    result = np.full(n, np.nan)
+
+    if isinstance(w.w, int):
+        wsize = w.w
+        for i in range(n):
+            start = max(0, i - wsize + 1)
+            section = active[start : i + 1]
+            valid = section[~np.isnan(section)]
+            if len(valid) >= 2:
+                result[i] = (
+                    float(np.std(valid, ddof=1)) * _math.sqrt(ann_factor) * 100.0
+                )
+    else:
+        td = _to_timedelta(w.w)
+        for i, d in enumerate(dates):
+            cutoff = d - td
+            section = np.array([active[j] for j in range(i + 1) if dates[j] > cutoff])
+            valid = section[~np.isnan(section)]
+            if len(valid) >= 2:
+                result[i] = (
+                    float(np.std(valid, ddof=1)) * _math.sqrt(ann_factor) * 100.0
+                )
+
+    df = pl.DataFrame({"date": dates, "value": result}).cast(
+        {"date": pl.Date, "value": pl.Float64}
+    )
+    return apply_ramp(df, w)
+
+
+def active_premium(
+    x: pl.DataFrame,
+    benchmark: pl.DataFrame,
+    w: Union[Window, int, str] = Window(None, 0),
+) -> pl.DataFrame:
+    """
+    Rolling active premium: annualized mean active return (portfolio - benchmark).
+
+    :param x: price timeseries of the portfolio
+    :param benchmark: price timeseries of the benchmark
+    :param w: rolling window
+    :return: annualized active premium series
+    """
+    ret_x = returns(x)
+    ret_b = returns(benchmark)
+    joined = ret_x.join(ret_b, on="date", how="inner", suffix="_b").sort("date")
+    ann_factor = _get_annualization_factor(x)
+    w = normalize_window(joined, w)
+
+    active = (joined["value"] - joined["value_b"]).to_numpy()
+    dates = joined["date"].to_list()
+    n = len(dates)
+    result = np.full(n, np.nan)
+
+    if isinstance(w.w, int):
+        wsize = w.w
+        for i in range(n):
+            start = max(0, i - wsize + 1)
+            section = active[start : i + 1]
+            valid = section[~np.isnan(section)]
+            if len(valid) >= 1:
+                result[i] = float(np.mean(valid)) * ann_factor
+    else:
+        td = _to_timedelta(w.w)
+        for i, d in enumerate(dates):
+            cutoff = d - td
+            section = np.array([active[j] for j in range(i + 1) if dates[j] > cutoff])
+            valid = section[~np.isnan(section)]
+            if len(valid) >= 1:
+                result[i] = float(np.mean(valid)) * ann_factor
+
+    df = pl.DataFrame({"date": dates, "value": result}).cast(
+        {"date": pl.Date, "value": pl.Float64}
+    )
+    return apply_ramp(df, w)
+
+
+def up_capture(
+    x: pl.DataFrame,
+    benchmark: pl.DataFrame,
+    w: Union[Window, int, str] = Window(None, 0),
+) -> pl.DataFrame:
+    """
+    Rolling up-market capture ratio: portfolio return / benchmark return in up periods.
+
+    :param x: price timeseries of the portfolio
+    :param benchmark: price timeseries of the benchmark
+    :param w: rolling window
+    :return: up-capture ratio series (1.0 = matching benchmark in up markets)
+    """
+    ret_x = returns(x)
+    ret_b = returns(benchmark)
+    joined = ret_x.join(ret_b, on="date", how="inner", suffix="_b").sort("date")
+    w = normalize_window(joined, w)
+
+    x_vals = joined["value"].to_numpy()
+    b_vals = joined["value_b"].to_numpy()
+    dates = joined["date"].to_list()
+    n = len(dates)
+    result = np.full(n, np.nan)
+
+    if isinstance(w.w, int):
+        wsize = w.w
+        for i in range(n):
+            start = max(0, i - wsize + 1)
+            xi = x_vals[start : i + 1]
+            bi = b_vals[start : i + 1]
+            mask = (~(np.isnan(xi) | np.isnan(bi))) & (bi > 0)
+            xi, bi = xi[mask], bi[mask]
+            if len(bi) >= 1 and np.mean(bi) != 0:
+                result[i] = float(np.mean(xi)) / float(np.mean(bi))
+    else:
+        td = _to_timedelta(w.w)
+        for i, d in enumerate(dates):
+            cutoff = d - td
+            idx = [j for j in range(i + 1) if dates[j] > cutoff]
+            xi = x_vals[idx]
+            bi = b_vals[idx]
+            mask = (~(np.isnan(xi) | np.isnan(bi))) & (bi > 0)
+            xi, bi = xi[mask], bi[mask]
+            if len(bi) >= 1 and np.mean(bi) != 0:
+                result[i] = float(np.mean(xi)) / float(np.mean(bi))
+
+    df = pl.DataFrame({"date": dates, "value": result}).cast(
+        {"date": pl.Date, "value": pl.Float64}
+    )
+    return apply_ramp(df, w)
+
+
+def down_capture(
+    x: pl.DataFrame,
+    benchmark: pl.DataFrame,
+    w: Union[Window, int, str] = Window(None, 0),
+) -> pl.DataFrame:
+    """
+    Rolling down-market capture ratio: portfolio return / benchmark return in down periods.
+
+    :param x: price timeseries of the portfolio
+    :param benchmark: price timeseries of the benchmark
+    :param w: rolling window
+    :return: down-capture ratio series (< 1.0 is favorable)
+    """
+    ret_x = returns(x)
+    ret_b = returns(benchmark)
+    joined = ret_x.join(ret_b, on="date", how="inner", suffix="_b").sort("date")
+    w = normalize_window(joined, w)
+
+    x_vals = joined["value"].to_numpy()
+    b_vals = joined["value_b"].to_numpy()
+    dates = joined["date"].to_list()
+    n = len(dates)
+    result = np.full(n, np.nan)
+
+    if isinstance(w.w, int):
+        wsize = w.w
+        for i in range(n):
+            start = max(0, i - wsize + 1)
+            xi = x_vals[start : i + 1]
+            bi = b_vals[start : i + 1]
+            mask = (~(np.isnan(xi) | np.isnan(bi))) & (bi < 0)
+            xi, bi = xi[mask], bi[mask]
+            if len(bi) >= 1 and np.mean(bi) != 0:
+                result[i] = float(np.mean(xi)) / float(np.mean(bi))
+    else:
+        td = _to_timedelta(w.w)
+        for i, d in enumerate(dates):
+            cutoff = d - td
+            idx = [j for j in range(i + 1) if dates[j] > cutoff]
+            xi = x_vals[idx]
+            bi = b_vals[idx]
+            mask = (~(np.isnan(xi) | np.isnan(bi))) & (bi < 0)
+            xi, bi = xi[mask], bi[mask]
+            if len(bi) >= 1 and np.mean(bi) != 0:
+                result[i] = float(np.mean(xi)) / float(np.mean(bi))
+
+    df = pl.DataFrame({"date": dates, "value": result}).cast(
+        {"date": pl.Date, "value": pl.Float64}
+    )
+    return apply_ramp(df, w)
+
+
+def systematic_risk(
+    x: pl.DataFrame,
+    benchmark: pl.DataFrame,
+    w: Union[Window, int, str] = Window(None, 0),
+) -> pl.DataFrame:
+    """
+    Rolling systematic risk: beta^2 * variance(benchmark).
+
+    :param x: price timeseries
+    :param benchmark: benchmark price timeseries
+    :param w: rolling window
+    :return: systematic risk series
+    """
+    beta_series = beta(x, benchmark, w, prices=True)
+    ret_b = returns(benchmark)
+    w_norm = normalize_window(ret_b, w)
+
+    b_vals = ret_b["value"].to_numpy()
+    b_dates = ret_b["date"].to_list()
+    nb = len(b_dates)
+    var_result = np.full(nb, np.nan)
+
+    if isinstance(w_norm.w, int):
+        wsize = w_norm.w
+        for i in range(nb):
+            start = max(0, i - wsize + 1)
+            section = b_vals[start : i + 1]
+            valid = section[~np.isnan(section)]
+            if len(valid) >= 2:
+                var_result[i] = float(np.var(valid, ddof=1))
+    else:
+        td = _to_timedelta(w_norm.w)
+        for i, d in enumerate(b_dates):
+            cutoff = d - td
+            section = np.array([b_vals[j] for j in range(i + 1) if b_dates[j] > cutoff])
+            valid = section[~np.isnan(section)]
+            if len(valid) >= 2:
+                var_result[i] = float(np.var(valid, ddof=1))
+
+    var_df = pl.DataFrame({"date": b_dates, "value": var_result}).cast(
+        {"date": pl.Date, "value": pl.Float64}
+    )
+    joined = beta_series.join(var_df, on="date", how="inner", suffix="_var")
+    return joined.with_columns(
+        (pl.col("value") ** 2 * pl.col("value_var")).alias("value")
+    ).select(["date", "value"])
+
+
+def specific_risk(
+    x: pl.DataFrame,
+    benchmark: pl.DataFrame,
+    w: Union[Window, int, str] = Window(None, 0),
+) -> pl.DataFrame:
+    """
+    Rolling specific (idiosyncratic) risk: total variance - systematic variance.
+
+    :param x: price timeseries
+    :param benchmark: benchmark price timeseries
+    :param w: rolling window
+    :return: specific risk series
+    """
+    from qtk.ts.statistics import var as _var
+
+    ret_x = returns(x)
+    w_norm = normalize_window(ret_x, w)
+    total_var = _var(ret_x, w_norm)
+    sys_risk = systematic_risk(x, benchmark, w_norm)
+
+    joined = total_var.join(sys_risk, on="date", how="inner", suffix="_sys")
+    return joined.with_columns(
+        (pl.col("value") - pl.col("value_sys")).alias("value")
+    ).select(["date", "value"])

@@ -27,3 +27,7 @@ from qtk.ts.analysis import *  # noqa: F401, F403
 from qtk.ts.statistics import *  # noqa: F401, F403
 from qtk.ts.econometrics import *  # noqa: F401, F403
 from qtk.ts.technicals import *  # noqa: F401, F403
+from qtk.ts.drawdown import *  # noqa: F401, F403
+from qtk.ts.downside import *  # noqa: F401, F403
+from qtk.ts.ratios import *  # noqa: F401, F403
+from qtk.ts.risk import *  # noqa: F401, F403

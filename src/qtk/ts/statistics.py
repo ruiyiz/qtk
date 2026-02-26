@@ -75,6 +75,11 @@ __all__ = [
     "percentile",
     "LinearRegression",
     "RollingLinearRegression",
+    "skewness",
+    "kurtosis",
+    "hurst_index",
+    "adjusted_sharpe",
+    "prob_sharpe_ratio",
 ]
 
 
@@ -123,9 +128,7 @@ def _rolling_apply_dur(x: pl.DataFrame, w: Window, fn) -> pl.DataFrame:
     result = np.full(len(vals), np.nan)
     for i, d in enumerate(dates):
         cutoff = d - td
-        section = np.array(
-            [vals[j] for j in range(i + 1) if dates[j] > cutoff]
-        )
+        section = np.array([vals[j] for j in range(i + 1) if dates[j] > cutoff])
         valid = section[~np.isnan(section)]
         if len(valid) > 0:
             result[i] = fn(valid)
@@ -134,7 +137,9 @@ def _rolling_apply_dur(x: pl.DataFrame, w: Window, fn) -> pl.DataFrame:
     )
 
 
-def _rolling_dispatch(x: pl.DataFrame, w: Window, fn_polars_expr, fn_numpy) -> pl.DataFrame:
+def _rolling_dispatch(
+    x: pl.DataFrame, w: Window, fn_polars_expr, fn_numpy
+) -> pl.DataFrame:
     """
     Dispatch rolling computation: use polars built-ins for int windows,
     numpy fallback for duration windows.
@@ -209,9 +214,7 @@ def range_(
     w = normalize_window(x, w)
     max_v = max_(x, Window(w.w, 0))
     min_v = min_(x, Window(w.w, 0))
-    result = max_v.with_columns(
-        (pl.col("value") - min_v["value"]).alias("value")
-    )
+    result = max_v.with_columns((pl.col("value") - min_v["value"]).alias("value"))
     return apply_ramp(result, w)
 
 
@@ -261,16 +264,16 @@ def median(
     w = normalize_window(x, w)
     if isinstance(w.w, int):
         result = x.with_columns(
-            pl.col("value").rolling_median(window_size=w.w, min_samples=1).alias("value")
+            pl.col("value")
+            .rolling_median(window_size=w.w, min_samples=1)
+            .alias("value")
         )
     else:
         result = _rolling_apply_dur(x, w, np.nanmedian)
     return apply_ramp(result, w)
 
 
-def mode(
-    x: pl.DataFrame, w: Union[Window, int, str] = Window(None, 0)
-) -> pl.DataFrame:
+def mode(x: pl.DataFrame, w: Union[Window, int, str] = Window(None, 0)) -> pl.DataFrame:
     """
     Rolling mode (most common value) of series.
 
@@ -336,9 +339,7 @@ def product(
     return apply_ramp(result, w)
 
 
-def std(
-    x: pl.DataFrame, w: Union[Window, int, str] = Window(None, 0)
-) -> pl.DataFrame:
+def std(x: pl.DataFrame, w: Union[Window, int, str] = Window(None, 0)) -> pl.DataFrame:
     """
     Rolling standard deviation (unbiased, ddof=1) of series.
 
@@ -371,9 +372,7 @@ def exponential_std(x: pl.DataFrame, beta: float = 0.75) -> pl.DataFrame:
     )
 
 
-def var(
-    x: pl.DataFrame, w: Union[Window, int, str] = Window(None, 0)
-) -> pl.DataFrame:
+def var(x: pl.DataFrame, w: Union[Window, int, str] = Window(None, 0)) -> pl.DataFrame:
     """
     Rolling variance (unbiased, ddof=1) of series.
 
@@ -404,10 +403,7 @@ def cov(
     :param w: window size
     :return: rolling covariance series
     """
-    joined = (
-        x.join(y, on="date", how="inner", suffix="_y")
-        .sort("date")
-    )
+    joined = x.join(y, on="date", how="inner", suffix="_y").sort("date")
     w = normalize_window(joined, w)
 
     x_arr = joined["value"].to_numpy(allow_copy=True)
@@ -465,15 +461,18 @@ def zscores(
         clean = x.drop_nulls("value")
         values = clean["value"].to_numpy(allow_copy=True)
         z = scipy_stats.zscore(values, ddof=1)
-        z_df = pl.DataFrame({"date": clean["date"].to_list(), "value": z.astype(float)}).cast(
-            {"date": pl.Date, "value": pl.Float64}
-        )
+        z_df = pl.DataFrame(
+            {"date": clean["date"].to_list(), "value": z.astype(float)}
+        ).cast({"date": pl.Date, "value": pl.Float64})
         return interpolate(z_df, x, Interpolate.NAN)
 
     if isinstance(w.w, int):
         result = x.with_columns(
             (
-                (pl.col("value") - pl.col("value").rolling_mean(window_size=w.w, min_samples=1))
+                (
+                    pl.col("value")
+                    - pl.col("value").rolling_mean(window_size=w.w, min_samples=1)
+                )
                 / pl.col("value").rolling_std(window_size=w.w, min_samples=1)
             ).alias("value")
         )
@@ -666,7 +665,9 @@ def percentile(
 
     if isinstance(w.w, int):
         result = x.with_columns(
-            pl.col("value").rolling_quantile(q, window_size=w.w, min_samples=1).alias("value")
+            pl.col("value")
+            .rolling_quantile(q, window_size=w.w, min_samples=1)
+            .alias("value")
         )
     else:
         td = _to_timedelta(w.w)
@@ -736,11 +737,16 @@ class LinearRegression:
             {"date": pl.Date, "value": pl.Float64}
         )
 
-    def predict(self, X_predict: Union[pl.DataFrame, List[pl.DataFrame]]) -> pl.DataFrame:
+    def predict(
+        self, X_predict: Union[pl.DataFrame, List[pl.DataFrame]]
+    ) -> pl.DataFrame:
         """Predict using the fitted model."""
         if isinstance(X_predict, list):
             df = pd.concat(
-                [pd.Series(d["value"].to_list(), index=d["date"].to_list()) for d in X_predict],
+                [
+                    pd.Series(d["value"].to_list(), index=d["date"].to_list())
+                    for d in X_predict
+                ],
                 axis=1,
             )
         else:
@@ -785,7 +791,9 @@ class RollingLinearRegression:
         X_pd.columns = range(len(X_pd.columns))
 
         if w <= len(X_pd.columns):
-            raise QtkValueError("Window length must be larger than the number of explanatory variables")
+            raise QtkValueError(
+                "Window length must be larger than the number of explanatory variables"
+            )
 
         X_pd = X_pd[~X_pd.isin([np.nan, np.inf, -np.inf]).any(axis=1)]
         y_pd = y_pd[~y_pd.isin([np.nan, np.inf, -np.inf])]
@@ -797,31 +805,39 @@ class RollingLinearRegression:
     def coefficient(self, i: int) -> pl.DataFrame:
         """Rolling estimated coefficient for predictor i."""
         params = self._res.params[i]
-        return pl.DataFrame({"date": list(params.index), "value": params.to_numpy()}).cast(
-            {"date": pl.Date, "value": pl.Float64}
-        ).with_columns(pl.col("value").fill_nan(None))
+        return (
+            pl.DataFrame({"date": list(params.index), "value": params.to_numpy()})
+            .cast({"date": pl.Date, "value": pl.Float64})
+            .with_columns(pl.col("value").fill_nan(None))
+        )
 
     def r_squared(self) -> pl.DataFrame:
         """Rolling R-squared."""
         rs = self._res.rsquared
-        return pl.DataFrame({"date": list(rs.index), "value": rs.to_numpy()}).cast(
-            {"date": pl.Date, "value": pl.Float64}
-        ).with_columns(pl.col("value").fill_nan(None))
+        return (
+            pl.DataFrame({"date": list(rs.index), "value": rs.to_numpy()})
+            .cast({"date": pl.Date, "value": pl.Float64})
+            .with_columns(pl.col("value").fill_nan(None))
+        )
 
     def fitted_values(self) -> pl.DataFrame:
         """Fitted values at the end of each rolling window."""
         comp = self._X.mul(self._res.params.values)
         fv = comp.sum(axis=1, min_count=len(comp.columns))
-        return pl.DataFrame({"date": list(fv.index), "value": fv.to_numpy()}).cast(
-            {"date": pl.Date, "value": pl.Float64}
-        ).with_columns(pl.col("value").fill_nan(None))
+        return (
+            pl.DataFrame({"date": list(fv.index), "value": fv.to_numpy()})
+            .cast({"date": pl.Date, "value": pl.Float64})
+            .with_columns(pl.col("value").fill_nan(None))
+        )
 
     def standard_deviation_of_errors(self) -> pl.DataFrame:
         """Rolling standard deviation of residuals."""
         se = np.sqrt(self._res.mse_resid)
-        return pl.DataFrame({"date": list(se.index), "value": se.to_numpy()}).cast(
-            {"date": pl.Date, "value": pl.Float64}
-        ).with_columns(pl.col("value").fill_nan(None))
+        return (
+            pl.DataFrame({"date": list(se.index), "value": se.to_numpy()})
+            .cast({"date": pl.Date, "value": pl.Float64})
+            .with_columns(pl.col("value").fill_nan(None))
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -829,27 +845,27 @@ class RollingLinearRegression:
 # ---------------------------------------------------------------------------
 
 
-def _to_pandas_xy(
-    X: Union[pl.DataFrame, List[pl.DataFrame]], y: pl.DataFrame
-) -> tuple:
+def _to_pandas_xy(X: Union[pl.DataFrame, List[pl.DataFrame]], y: pl.DataFrame) -> tuple:
     """Convert polars DataFrames to aligned pandas Series/DataFrame for statsmodels."""
     if isinstance(X, list):
         X_pd = pd.concat(
             [
-                pd.Series(df["value"].to_list(), index=df["date"].to_list(), name=f"x{i}")
+                pd.Series(
+                    df["value"].to_list(), index=df["date"].to_list(), name=f"x{i}"
+                )
                 for i, df in enumerate(X)
             ],
             axis=1,
         )
     else:
-        X_pd = pd.Series(X["value"].to_list(), index=X["date"].to_list(), name="x0").to_frame()
+        X_pd = pd.Series(
+            X["value"].to_list(), index=X["date"].to_list(), name="x0"
+        ).to_frame()
     y_pd = pd.Series(y["value"].to_list(), index=y["date"].to_list())
     return X_pd, y_pd
 
 
-def _merge_list(
-    series_list: List[pl.DataFrame], agg: str
-) -> pl.DataFrame:
+def _merge_list(series_list: List[pl.DataFrame], agg: str) -> pl.DataFrame:
     """
     Merge a list of DataFrames with `date` and `value` columns
     by joining on date, then applying a cross-column aggregation.
@@ -860,7 +876,9 @@ def _merge_list(
         )
     result = series_list[0].rename({"value": "v0"})
     for i, df in enumerate(series_list[1:], start=1):
-        result = result.join(df.rename({"value": f"v{i}"}), on="date", how="outer", coalesce=True)
+        result = result.join(
+            df.rename({"value": f"v{i}"}), on="date", how="outer", coalesce=True
+        )
     result = result.sort("date")
     value_cols = [c for c in result.columns if c != "date"]
     if agg == "min":
@@ -880,3 +898,268 @@ def _merge_list(
             pl.mean_horizontal(*[pl.col(c) for c in value_cols]).alias("value")
         )
     return result.select(["date", "value"])
+
+
+# ---------------------------------------------------------------------------
+# Higher moments and distribution analysis
+# ---------------------------------------------------------------------------
+
+
+def skewness(
+    x: pl.DataFrame,
+    w: Union[Window, int, str] = Window(None, 0),
+) -> pl.DataFrame:
+    """
+    Rolling sample skewness (adjusted Fisher-Pearson standardized moment).
+
+    :param x: timeseries
+    :param w: rolling window
+    :return: rolling skewness series
+    """
+    w = normalize_window(x, w)
+
+    def _skew(arr):
+        n = len(arr)
+        if n < 3:
+            return np.nan
+        mu = np.mean(arr)
+        sigma = np.std(arr, ddof=1)
+        if sigma == 0:
+            return 0.0
+        return float(n / ((n - 1) * (n - 2)) * np.sum(((arr - mu) / sigma) ** 3))
+
+    if isinstance(w.w, int):
+        result = _rolling_apply_np(x, w, _skew)
+    else:
+        result = _rolling_apply_dur(x, w, _skew)
+    return apply_ramp(result, w)
+
+
+def kurtosis(
+    x: pl.DataFrame,
+    w: Union[Window, int, str] = Window(None, 0),
+) -> pl.DataFrame:
+    """
+    Rolling excess kurtosis (adjusted Fisher definition, normal distribution = 0).
+
+    :param x: timeseries
+    :param w: rolling window
+    :return: rolling excess kurtosis series
+    """
+    w = normalize_window(x, w)
+
+    def _kurt(arr):
+        n = len(arr)
+        if n < 4:
+            return np.nan
+        mu = np.mean(arr)
+        sigma = np.std(arr, ddof=1)
+        if sigma == 0:
+            return 0.0
+        raw = float(
+            n
+            * (n + 1)
+            / ((n - 1) * (n - 2) * (n - 3))
+            * np.sum(((arr - mu) / sigma) ** 4)
+            - 3 * (n - 1) ** 2 / ((n - 2) * (n - 3))
+        )
+        return raw
+
+    if isinstance(w.w, int):
+        result = _rolling_apply_np(x, w, _kurt)
+    else:
+        result = _rolling_apply_dur(x, w, _kurt)
+    return apply_ramp(result, w)
+
+
+def hurst_index(x: pl.DataFrame) -> float:
+    """
+    Hurst exponent: measures long-range dependence.
+
+    H < 0.5: mean-reverting; H = 0.5: random walk; H > 0.5: trending.
+
+    Uses the rescaled range (R/S) method.
+
+    :param x: timeseries of prices or values
+    :return: Hurst exponent estimate
+    """
+    vals = x["value"].drop_nulls().to_numpy()
+    n = len(vals)
+    if n < 20:
+        from qtk.errors import QtkValueError
+
+        raise QtkValueError(
+            "Series too short for Hurst index estimation (need >= 20 points)."
+        )
+
+    lags = range(2, n // 2)
+    rs_list = []
+    lag_list = []
+    for lag in lags:
+        segments = [vals[i : i + lag] for i in range(0, n - lag, lag)]
+        rs_vals = []
+        for seg in segments:
+            if len(seg) < 2:
+                continue
+            mean_seg = np.mean(seg)
+            deviations = np.cumsum(seg - mean_seg)
+            r = np.max(deviations) - np.min(deviations)
+            s = np.std(seg, ddof=1)
+            if s > 0:
+                rs_vals.append(r / s)
+        if rs_vals:
+            rs_list.append(np.mean(rs_vals))
+            lag_list.append(lag)
+
+    if len(lag_list) < 2:
+        return 0.5
+    log_lags = np.log(lag_list)
+    log_rs = np.log(rs_list)
+    h, _ = np.polyfit(log_lags, log_rs, 1)
+    return float(h)
+
+
+def adjusted_sharpe(
+    x: pl.DataFrame,
+    rf: float = 0.0,
+    w: Union[Window, int, str] = Window(None, 0),
+) -> pl.DataFrame:
+    """
+    Rolling Adjusted Sharpe Ratio: Sharpe ratio corrected for skewness and kurtosis.
+
+    ASR = SR * (1 + skew/6 * SR - (kurt - 3)/24 * SR^2)
+
+    :param x: price timeseries (will compute returns internally)
+    :param rf: annualized risk-free rate
+    :param w: rolling window
+    :return: adjusted Sharpe ratio series
+    """
+    import math as _math
+    from qtk.ts.econometrics import returns as _returns, _get_annualization_factor
+
+    ret = _returns(x)
+    ann_factor = _get_annualization_factor(x)
+    w = normalize_window(ret, w)
+
+    vals = ret["value"].to_numpy(allow_copy=True)
+    dates = ret["date"].to_list()
+    n = len(vals)
+    result = np.full(n, np.nan)
+
+    rf_per_period = rf / ann_factor
+
+    def _compute(section):
+        valid = section[~np.isnan(section)]
+        nv = len(valid)
+        if nv < 4:
+            return np.nan
+        mu = float(np.mean(valid)) - rf_per_period
+        sigma = float(np.std(valid, ddof=1))
+        if sigma == 0:
+            return np.nan
+        sr = mu * _math.sqrt(ann_factor) / (sigma * _math.sqrt(ann_factor))
+        skew = float(
+            nv / ((nv - 1) * (nv - 2)) * np.sum(((valid - np.mean(valid)) / sigma) ** 3)
+        )
+        kurt = float(
+            nv
+            * (nv + 1)
+            / ((nv - 1) * (nv - 2) * (nv - 3))
+            * np.sum(((valid - np.mean(valid)) / sigma) ** 4)
+            - 3 * (nv - 1) ** 2 / ((nv - 2) * (nv - 3))
+        )
+        return sr * (1 + skew / 6 * sr - kurt / 24 * sr**2)
+
+    if isinstance(w.w, int):
+        wsize = w.w
+        for i in range(n):
+            start = max(0, i - wsize + 1)
+            result[i] = _compute(vals[start : i + 1])
+    else:
+        td = _to_timedelta(w.w)
+        for i, d in enumerate(dates):
+            cutoff = d - td
+            section = np.array([vals[j] for j in range(i + 1) if dates[j] > cutoff])
+            result[i] = _compute(section)
+
+    df = pl.DataFrame({"date": dates, "value": result}).cast(
+        {"date": pl.Date, "value": pl.Float64}
+    )
+    return apply_ramp(df, w)
+
+
+def prob_sharpe_ratio(
+    x: pl.DataFrame,
+    rf: float = 0.0,
+    benchmark_sr: float = 0.0,
+    w: Union[Window, int, str] = Window(None, 0),
+) -> pl.DataFrame:
+    """
+    Rolling Probabilistic Sharpe Ratio: probability that the true SR exceeds benchmark_sr.
+
+    PSR = N( (SR - SR*) * sqrt(T-1) / sqrt(1 - skew*SR + (kurt-1)/4 * SR^2) )
+
+    :param x: price timeseries
+    :param rf: annualized risk-free rate
+    :param benchmark_sr: benchmark Sharpe ratio to test against
+    :param w: rolling window
+    :return: probability series in [0, 1]
+    """
+    import math as _math
+    from scipy.stats import norm
+    from qtk.ts.econometrics import returns as _returns, _get_annualization_factor
+
+    ret = _returns(x)
+    ann_factor = _get_annualization_factor(x)
+    w = normalize_window(ret, w)
+
+    vals = ret["value"].to_numpy(allow_copy=True)
+    dates = ret["date"].to_list()
+    n = len(vals)
+    result = np.full(n, np.nan)
+
+    rf_per_period = rf / ann_factor
+
+    def _compute(section):
+        valid = section[~np.isnan(section)]
+        nv = len(valid)
+        if nv < 4:
+            return np.nan
+        mu = float(np.mean(valid)) - rf_per_period
+        sigma = float(np.std(valid, ddof=1))
+        if sigma == 0:
+            return np.nan
+        sr = mu / sigma
+        skew = float(
+            nv / ((nv - 1) * (nv - 2)) * np.sum(((valid - np.mean(valid)) / sigma) ** 3)
+        )
+        kurt = float(
+            nv
+            * (nv + 1)
+            / ((nv - 1) * (nv - 2) * (nv - 3))
+            * np.sum(((valid - np.mean(valid)) / sigma) ** 4)
+            - 3 * (nv - 1) ** 2 / ((nv - 2) * (nv - 3))
+        )
+        sr_bench_per_period = benchmark_sr / _math.sqrt(ann_factor)
+        denom_sq = 1 - skew * sr + (kurt + 1) / 4 * sr**2
+        if denom_sq <= 0:
+            return np.nan
+        z = (sr - sr_bench_per_period) * _math.sqrt(nv - 1) / _math.sqrt(denom_sq)
+        return float(norm.cdf(z))
+
+    if isinstance(w.w, int):
+        wsize = w.w
+        for i in range(n):
+            start = max(0, i - wsize + 1)
+            result[i] = _compute(vals[start : i + 1])
+    else:
+        td = _to_timedelta(w.w)
+        for i, d in enumerate(dates):
+            cutoff = d - td
+            section = np.array([vals[j] for j in range(i + 1) if dates[j] > cutoff])
+            result[i] = _compute(section)
+
+    df = pl.DataFrame({"date": dates, "value": result}).cast(
+        {"date": pl.Date, "value": pl.Float64}
+    )
+    return apply_ramp(df, w)
