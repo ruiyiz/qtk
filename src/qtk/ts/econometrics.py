@@ -76,6 +76,11 @@ __all__ = [
     "active_premium",
     "up_capture",
     "down_capture",
+    "up_capture_number",
+    "down_capture_number",
+    "up_capture_percent",
+    "down_capture_percent",
+    "persistence_score",
     "systematic_risk",
     "specific_risk",
 ]
@@ -1094,6 +1099,277 @@ def down_capture(
             xi, bi = xi[mask], bi[mask]
             if len(bi) >= 1 and np.mean(bi) != 0:
                 result[i] = float(np.mean(xi)) / float(np.mean(bi))
+
+    df = pl.DataFrame({"date": dates, "value": result}).cast(
+        {"date": pl.Date, "value": pl.Float64}
+    )
+    return apply_ramp(df, w)
+
+
+def up_capture_number(
+    x: pl.DataFrame,
+    benchmark: pl.DataFrame,
+    w: Union[Window, int, str] = Window(None, 0),
+) -> pl.DataFrame:
+    """
+    Rolling up-market capture number: fraction of up benchmark periods where portfolio also rose.
+
+    :param x: price timeseries of the portfolio
+    :param benchmark: price timeseries of the benchmark
+    :param w: rolling window
+    :return: fraction in [0, 1] series
+    """
+    ret_x = returns(x)
+    ret_b = returns(benchmark)
+    joined = ret_x.join(ret_b, on="date", how="inner", suffix="_b").sort("date")
+    w = normalize_window(joined, w)
+
+    x_vals = joined["value"].to_numpy()
+    b_vals = joined["value_b"].to_numpy()
+    dates = joined["date"].to_list()
+    n = len(dates)
+    result = np.full(n, np.nan)
+
+    if isinstance(w.w, int):
+        wsize = w.w
+        for i in range(n):
+            start = max(0, i - wsize + 1)
+            xi = x_vals[start : i + 1]
+            bi = b_vals[start : i + 1]
+            mask = (~(np.isnan(xi) | np.isnan(bi))) & (bi > 0)
+            xi_up = xi[mask]
+            if len(xi_up) >= 1:
+                result[i] = float(np.mean(xi_up > 0))
+    else:
+        td = _to_timedelta(w.w)
+        for i, d in enumerate(dates):
+            cutoff = d - td
+            idx = [j for j in range(i + 1) if dates[j] > cutoff]
+            xi = x_vals[idx]
+            bi = b_vals[idx]
+            mask = (~(np.isnan(xi) | np.isnan(bi))) & (bi > 0)
+            xi_up = xi[mask]
+            if len(xi_up) >= 1:
+                result[i] = float(np.mean(xi_up > 0))
+
+    df = pl.DataFrame({"date": dates, "value": result}).cast(
+        {"date": pl.Date, "value": pl.Float64}
+    )
+    return apply_ramp(df, w)
+
+
+def down_capture_number(
+    x: pl.DataFrame,
+    benchmark: pl.DataFrame,
+    w: Union[Window, int, str] = Window(None, 0),
+) -> pl.DataFrame:
+    """
+    Rolling down-market capture number: fraction of down benchmark periods where portfolio also fell.
+
+    :param x: price timeseries of the portfolio
+    :param benchmark: price timeseries of the benchmark
+    :param w: rolling window
+    :return: fraction in [0, 1] series
+    """
+    ret_x = returns(x)
+    ret_b = returns(benchmark)
+    joined = ret_x.join(ret_b, on="date", how="inner", suffix="_b").sort("date")
+    w = normalize_window(joined, w)
+
+    x_vals = joined["value"].to_numpy()
+    b_vals = joined["value_b"].to_numpy()
+    dates = joined["date"].to_list()
+    n = len(dates)
+    result = np.full(n, np.nan)
+
+    if isinstance(w.w, int):
+        wsize = w.w
+        for i in range(n):
+            start = max(0, i - wsize + 1)
+            xi = x_vals[start : i + 1]
+            bi = b_vals[start : i + 1]
+            mask = (~(np.isnan(xi) | np.isnan(bi))) & (bi < 0)
+            xi_dn = xi[mask]
+            if len(xi_dn) >= 1:
+                result[i] = float(np.mean(xi_dn < 0))
+    else:
+        td = _to_timedelta(w.w)
+        for i, d in enumerate(dates):
+            cutoff = d - td
+            idx = [j for j in range(i + 1) if dates[j] > cutoff]
+            xi = x_vals[idx]
+            bi = b_vals[idx]
+            mask = (~(np.isnan(xi) | np.isnan(bi))) & (bi < 0)
+            xi_dn = xi[mask]
+            if len(xi_dn) >= 1:
+                result[i] = float(np.mean(xi_dn < 0))
+
+    df = pl.DataFrame({"date": dates, "value": result}).cast(
+        {"date": pl.Date, "value": pl.Float64}
+    )
+    return apply_ramp(df, w)
+
+
+def up_capture_percent(
+    x: pl.DataFrame,
+    benchmark: pl.DataFrame,
+    w: Union[Window, int, str] = Window(None, 0),
+) -> pl.DataFrame:
+    """
+    Rolling up-market batting average: fraction of up benchmark periods where portfolio outperformed.
+
+    :param x: price timeseries of the portfolio
+    :param benchmark: price timeseries of the benchmark
+    :param w: rolling window
+    :return: fraction in [0, 1] series
+    """
+    ret_x = returns(x)
+    ret_b = returns(benchmark)
+    joined = ret_x.join(ret_b, on="date", how="inner", suffix="_b").sort("date")
+    w = normalize_window(joined, w)
+
+    x_vals = joined["value"].to_numpy()
+    b_vals = joined["value_b"].to_numpy()
+    dates = joined["date"].to_list()
+    n = len(dates)
+    result = np.full(n, np.nan)
+
+    if isinstance(w.w, int):
+        wsize = w.w
+        for i in range(n):
+            start = max(0, i - wsize + 1)
+            xi = x_vals[start : i + 1]
+            bi = b_vals[start : i + 1]
+            mask = (~(np.isnan(xi) | np.isnan(bi))) & (bi > 0)
+            xi_up, bi_up = xi[mask], bi[mask]
+            if len(xi_up) >= 1:
+                result[i] = float(np.mean(xi_up > bi_up))
+    else:
+        td = _to_timedelta(w.w)
+        for i, d in enumerate(dates):
+            cutoff = d - td
+            idx = [j for j in range(i + 1) if dates[j] > cutoff]
+            xi = x_vals[idx]
+            bi = b_vals[idx]
+            mask = (~(np.isnan(xi) | np.isnan(bi))) & (bi > 0)
+            xi_up, bi_up = xi[mask], bi[mask]
+            if len(xi_up) >= 1:
+                result[i] = float(np.mean(xi_up > bi_up))
+
+    df = pl.DataFrame({"date": dates, "value": result}).cast(
+        {"date": pl.Date, "value": pl.Float64}
+    )
+    return apply_ramp(df, w)
+
+
+def down_capture_percent(
+    x: pl.DataFrame,
+    benchmark: pl.DataFrame,
+    w: Union[Window, int, str] = Window(None, 0),
+) -> pl.DataFrame:
+    """
+    Rolling down-market batting average: fraction of down benchmark periods where portfolio outperformed.
+
+    Outperforming in a down period means losing less than the benchmark (ra > rb).
+
+    :param x: price timeseries of the portfolio
+    :param benchmark: price timeseries of the benchmark
+    :param w: rolling window
+    :return: fraction in [0, 1] series
+    """
+    ret_x = returns(x)
+    ret_b = returns(benchmark)
+    joined = ret_x.join(ret_b, on="date", how="inner", suffix="_b").sort("date")
+    w = normalize_window(joined, w)
+
+    x_vals = joined["value"].to_numpy()
+    b_vals = joined["value_b"].to_numpy()
+    dates = joined["date"].to_list()
+    n = len(dates)
+    result = np.full(n, np.nan)
+
+    if isinstance(w.w, int):
+        wsize = w.w
+        for i in range(n):
+            start = max(0, i - wsize + 1)
+            xi = x_vals[start : i + 1]
+            bi = b_vals[start : i + 1]
+            mask = (~(np.isnan(xi) | np.isnan(bi))) & (bi < 0)
+            xi_dn, bi_dn = xi[mask], bi[mask]
+            if len(xi_dn) >= 1:
+                result[i] = float(np.mean(xi_dn > bi_dn))
+    else:
+        td = _to_timedelta(w.w)
+        for i, d in enumerate(dates):
+            cutoff = d - td
+            idx = [j for j in range(i + 1) if dates[j] > cutoff]
+            xi = x_vals[idx]
+            bi = b_vals[idx]
+            mask = (~(np.isnan(xi) | np.isnan(bi))) & (bi < 0)
+            xi_dn, bi_dn = xi[mask], bi[mask]
+            if len(xi_dn) >= 1:
+                result[i] = float(np.mean(xi_dn > bi_dn))
+
+    df = pl.DataFrame({"date": dates, "value": result}).cast(
+        {"date": pl.Date, "value": pl.Float64}
+    )
+    return apply_ramp(df, w)
+
+
+def persistence_score(
+    x: pl.DataFrame,
+    period: int,
+    w: Union[Window, int, str] = Window(None, 0),
+) -> pl.DataFrame:
+    """
+    Rolling persistence score: fraction of sub-periods with positive cumulative returns.
+
+    For each outer rolling window, rolls a sub-window of size `period` and reports the
+    fraction of sub-windows where the cumulative return is positive.
+
+    :param x: price timeseries
+    :param period: sub-window size in observations
+    :param w: outer rolling window
+    :return: persistence score in [0, 1] series
+    """
+    ret = returns(x)
+    w = normalize_window(ret, w)
+
+    r_vals = ret["value"].to_numpy(allow_copy=True)
+    dates = ret["date"].to_list()
+    n = len(dates)
+    result = np.full(n, np.nan)
+
+    def _score(window_r: np.ndarray) -> Optional[float]:
+        m = len(window_r)
+        if m < period:
+            return None
+        pos = 0
+        total = 0
+        for j in range(m - period + 1):
+            sub = window_r[j : j + period]
+            if np.any(np.isnan(sub)):
+                continue
+            total += 1
+            if float(np.prod(1.0 + sub)) > 1.0:
+                pos += 1
+        return pos / total if total > 0 else None
+
+    if isinstance(w.w, int):
+        wsize = w.w
+        for i in range(n):
+            start = max(0, i - wsize + 1)
+            s = _score(r_vals[start : i + 1])
+            if s is not None:
+                result[i] = s
+    else:
+        td = _to_timedelta(w.w)
+        for i, d in enumerate(dates):
+            cutoff = d - td
+            idx = [j for j in range(i + 1) if dates[j] > cutoff]
+            s = _score(r_vals[idx])
+            if s is not None:
+                result[i] = s
 
     df = pl.DataFrame({"date": dates, "value": result}).cast(
         {"date": pl.Date, "value": pl.Float64}

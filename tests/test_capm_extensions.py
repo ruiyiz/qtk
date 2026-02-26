@@ -12,11 +12,16 @@ from qtk.ts.econometrics import (
     bear_beta,
     bull_beta,
     down_capture,
+    down_capture_number,
+    down_capture_percent,
+    persistence_score,
     specific_risk,
     systematic_risk,
     timing_ratio,
     tracking_error,
     up_capture,
+    up_capture_number,
+    up_capture_percent,
 )
 
 
@@ -124,6 +129,131 @@ def test_down_capture_vs_self():
     non_nan = [v for v in vals if not np.isnan(v)]
     for v in non_nan:
         assert v == pytest.approx(1.0, rel=1e-6)
+
+
+def test_up_capture_number_vs_self():
+    """In up periods, portfolio == benchmark, so it always goes up too -> 1.0."""
+    s = _price_series()
+    result = up_capture_number(s, s)
+    vals = result["value"].drop_nulls().to_numpy()
+    non_nan = [v for v in vals if not np.isnan(v)]
+    for v in non_nan:
+        assert v == pytest.approx(1.0, rel=1e-6)
+
+
+def test_down_capture_number_vs_self():
+    """In down periods, portfolio == benchmark, so it always falls too -> 1.0."""
+    s = _price_series()
+    result = down_capture_number(s, s)
+    vals = result["value"].drop_nulls().to_numpy()
+    non_nan = [v for v in vals if not np.isnan(v)]
+    for v in non_nan:
+        assert v == pytest.approx(1.0, rel=1e-6)
+
+
+def test_up_capture_number_range():
+    """up_capture_number values must be in [0, 1]."""
+    s1 = _price_series(seed=1)
+    s2 = _price_series(seed=2)
+    result = up_capture_number(s1, s2)
+    vals = result["value"].drop_nulls().to_numpy()
+    non_nan = [v for v in vals if not np.isnan(v)]
+    assert all(0.0 <= v <= 1.0 for v in non_nan)
+
+
+def test_down_capture_number_range():
+    """down_capture_number values must be in [0, 1]."""
+    s1 = _price_series(seed=1)
+    s2 = _price_series(seed=2)
+    result = down_capture_number(s1, s2)
+    vals = result["value"].drop_nulls().to_numpy()
+    non_nan = [v for v in vals if not np.isnan(v)]
+    assert all(0.0 <= v <= 1.0 for v in non_nan)
+
+
+def test_up_capture_percent_vs_self():
+    """Portfolio == benchmark -> never outperforms itself -> 0.0."""
+    s = _price_series()
+    result = up_capture_percent(s, s)
+    vals = result["value"].drop_nulls().to_numpy()
+    non_nan = [v for v in vals if not np.isnan(v)]
+    for v in non_nan:
+        assert v == pytest.approx(0.0, abs=1e-6)
+
+
+def test_down_capture_percent_vs_self():
+    """Portfolio == benchmark -> never outperforms itself in down periods -> 0.0."""
+    s = _price_series()
+    result = down_capture_percent(s, s)
+    vals = result["value"].drop_nulls().to_numpy()
+    non_nan = [v for v in vals if not np.isnan(v)]
+    for v in non_nan:
+        assert v == pytest.approx(0.0, abs=1e-6)
+
+
+def test_up_capture_percent_range():
+    s1 = _price_series(seed=1)
+    s2 = _price_series(seed=2)
+    result = up_capture_percent(s1, s2)
+    vals = result["value"].drop_nulls().to_numpy()
+    non_nan = [v for v in vals if not np.isnan(v)]
+    assert all(0.0 <= v <= 1.0 for v in non_nan)
+
+
+def test_down_capture_percent_range():
+    s1 = _price_series(seed=1)
+    s2 = _price_series(seed=2)
+    result = down_capture_percent(s1, s2)
+    vals = result["value"].drop_nulls().to_numpy()
+    non_nan = [v for v in vals if not np.isnan(v)]
+    assert all(0.0 <= v <= 1.0 for v in non_nan)
+
+
+def test_persistence_score_trending_up():
+    """A consistently rising series should have persistence score of 1.0."""
+    prices = _s([100.0 * (1.01**i) for i in range(20)])
+    result = persistence_score(prices, period=3)
+    vals = result["value"].drop_nulls().to_numpy()
+    non_nan = [v for v in vals if not np.isnan(v)]
+    assert len(non_nan) > 0
+    for v in non_nan:
+        assert v == pytest.approx(1.0, rel=1e-6)
+
+
+def test_persistence_score_trending_down():
+    """A consistently falling series should have persistence score of 0.0."""
+    prices = _s([100.0 * (0.99**i) for i in range(20)])
+    result = persistence_score(prices, period=3)
+    vals = result["value"].drop_nulls().to_numpy()
+    non_nan = [v for v in vals if not np.isnan(v)]
+    assert len(non_nan) > 0
+    for v in non_nan:
+        assert v == pytest.approx(0.0, abs=1e-6)
+
+
+def test_persistence_score_range():
+    """persistence_score values must be in [0, 1]."""
+    s = _price_series(seed=7)
+    result = persistence_score(s, period=5)
+    vals = result["value"].drop_nulls().to_numpy()
+    non_nan = [v for v in vals if not np.isnan(v)]
+    assert len(non_nan) > 0
+    assert all(0.0 <= v <= 1.0 for v in non_nan)
+
+
+def test_persistence_score_known_value():
+    """Manual check: alternating up/down with period=2 -> 0/2 positive sub-windows."""
+    # Returns: +10%, -10%, +10%, -10% -> prices: 100, 110, 99, 108.9, 98.01
+    prices = _s([100.0, 110.0, 99.0, 108.9, 98.01])
+    # returns: [+0.1, -0.1, +0.1, -0.1]
+    # period=2 sub-windows: [+0.1,-0.1], [-0.1,+0.1], [+0.1,-0.1]
+    # cum products: 0.99, 0.99, 0.99 -> all < 1.0 -> score = 0.0
+    result = persistence_score(prices, period=2)
+    last_val = result["value"].drop_nulls().to_numpy()
+    non_nan = [v for v in last_val if not np.isnan(v)]
+    assert len(non_nan) > 0
+    for v in non_nan:
+        assert v == pytest.approx(0.0, abs=1e-6)
 
 
 def test_systematic_plus_specific_approx_total():
